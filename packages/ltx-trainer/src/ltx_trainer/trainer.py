@@ -363,9 +363,34 @@ class LtxvTrainer:
 
         mask = conditions["prompt_attention_mask"]
         additive_mask = convert_to_additive_mask(mask, video_features.dtype)
+
+        if os.environ.get("LTX_DEBUG_FIXED_NOISE") == "1":
+            print(f"[LTX-2 CP0] video_features: shape={list(video_features.shape)}, "
+                  f"dtype={video_features.dtype}, mean={video_features.float().mean():.8f}, "
+                  f"std={video_features.float().std():.8f}")
+            if audio_features is not None:
+                print(f"[LTX-2 CP0] audio_features: shape={list(audio_features.shape)}, "
+                      f"dtype={audio_features.dtype}, mean={audio_features.float().mean():.8f}, "
+                      f"std={audio_features.float().std():.8f}")
+            print(f"[LTX-2 CP0] mask: shape={list(mask.shape)}, sum={mask.sum().item()}")
+
+            vc = self._embeddings_processor.video_connector
+            first_param = next(iter(vc.parameters()))
+            print(f"[LTX-2 CP0] connector_weight: dtype={first_param.dtype}, "
+                  f"mean={first_param.float().mean():.8f}, std={first_param.float().std():.8f}")
+
         video_embeds, audio_embeds, attention_mask = self._embeddings_processor.create_embeddings(
             video_features, audio_features, additive_mask
         )
+
+        if os.environ.get("LTX_DEBUG_FIXED_NOISE") == "1":
+            print(f"[LTX-2 CP1] video_embeds: shape={list(video_embeds.shape)}, "
+                  f"mean={video_embeds.float().mean():.8f}, std={video_embeds.float().std():.8f}")
+            if audio_embeds is not None:
+                print(f"[LTX-2 CP1] audio_embeds: shape={list(audio_embeds.shape)}, "
+                      f"mean={audio_embeds.float().mean():.8f}, std={audio_embeds.float().std():.8f}")
+            print(f"[LTX-2 CP1] attention_mask: shape={list(attention_mask.shape)}, "
+                  f"sum={attention_mask.float().sum():.0f}")
 
         conditions["video_prompt_embeds"] = video_embeds
         conditions["audio_prompt_embeds"] = audio_embeds
@@ -381,6 +406,14 @@ class LtxvTrainer:
             perturbations=None,
         )
 
+        if os.environ.get("LTX_DEBUG_FIXED_NOISE") == "1":
+            print(f"[LTX-2 CP3] video_pred: shape={list(video_pred.shape)}, "
+                  f"mean={video_pred.float().mean():.8f}, std={video_pred.float().std():.8f}")
+            if audio_pred is not None:
+                print(f"[LTX-2 CP3] audio_pred: shape={list(audio_pred.shape)}, "
+                      f"mean={audio_pred.float().mean():.8f}, std={audio_pred.float().std():.8f}")
+
+        # Use strategy to compute loss
         # Use strategy to compute loss (returns per-element [B,] for sigma-bucket tracking)
         loss = self._training_strategy.compute_loss(video_pred, audio_pred, model_inputs)
 

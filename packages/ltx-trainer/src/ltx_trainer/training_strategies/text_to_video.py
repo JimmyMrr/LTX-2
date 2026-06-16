@@ -6,6 +6,7 @@ This strategy implements standard text-to-video generation training where:
 - Optionally supports joint audio-video training
 """
 
+import os
 from typing import Any, Literal
 
 import torch
@@ -126,6 +127,16 @@ class TextToVideoStrategy(TrainingStrategy):
         sigmas = timestep_sampler.sample_for(video_latents)
         video_noise = torch.randn_like(video_latents)
 
+        if os.environ.get("LTX_DEBUG_FIXED_NOISE") == "1":
+            video_conditioning_mask = torch.zeros_like(video_conditioning_mask)
+            sigmas = torch.full((batch_size,), 0.5, device=device, dtype=dtype)
+            video_noise = torch.full_like(video_latents, 0.1)
+            _step = int(os.environ.get("LTX_DEBUG_STEP", "0"))
+            if _step == 0:
+                print(f"[LTX-2 DEBUG] sigma={sigmas[0].item():.8f}, "
+                      f"noise_mean={video_noise.mean():.8f}, noise_std={video_noise.std():.8f}, "
+                      f"cond_mask_sum={video_conditioning_mask.sum().item()}")
+
         # Apply noise: noisy = (1 - sigma) * clean + sigma * noise
         sigmas_expanded = sigmas.view(-1, 1, 1)
         noisy_video = (1 - sigmas_expanded) * video_latents + sigmas_expanded * video_noise
@@ -136,6 +147,14 @@ class TextToVideoStrategy(TrainingStrategy):
 
         # Compute video targets (velocity prediction)
         video_targets = video_noise - video_latents
+
+        if os.environ.get("LTX_DEBUG_FIXED_NOISE") == "1":
+            print(f"[LTX-2 CP2] latents: shape={list(video_latents.shape)}, "
+                  f"mean={video_latents.float().mean():.8f}, std={video_latents.float().std():.8f}")
+            print(f"[LTX-2 CP2] noisy_video: mean={noisy_video.float().mean():.8f}, "
+                  f"std={noisy_video.float().std():.8f}")
+            print(f"[LTX-2 CP2] target: mean={video_targets.float().mean():.8f}, "
+                  f"std={video_targets.float().std():.8f}")
 
         # Create per-token timesteps
         video_timesteps = self._create_per_token_timesteps(video_conditioning_mask, sigmas.squeeze())
@@ -220,6 +239,9 @@ class TextToVideoStrategy(TrainingStrategy):
         # Sample audio noise
         audio_noise = torch.randn_like(audio_latents)
 
+        if os.environ.get("LTX_DEBUG_FIXED_NOISE") == "1":
+            audio_noise = torch.full_like(audio_latents, 0.1)
+
         # Apply noise to audio (same sigma as video)
         sigmas_expanded = sigmas.view(-1, 1, 1)
         noisy_audio = (1 - sigmas_expanded) * audio_latents + sigmas_expanded * audio_noise
@@ -266,12 +288,18 @@ class TextToVideoStrategy(TrainingStrategy):
         masked = video_loss.mul(video_loss_mask)
         video_loss = masked.mean(dim=[-2, -1]) / video_loss_mask.mean(dim=[-2, -1]).clamp(min=1e-8)
 
+        if os.environ.get("LTX_DEBUG_FIXED_NOISE") == "1":
+            print(f"[LTX-2 CP4] video_loss={video_loss.mean().item():.8f}, dtype={video_loss.dtype}")
+
         # If no audio, return video loss only
         if not self.config.with_audio or audio_pred is None or inputs.audio_targets is None:
             return video_loss
 
         # Audio loss: per-element mean over (seq, channels), [B,]
         audio_loss = (audio_pred - inputs.audio_targets).pow(2).mean(dim=[-2, -1])
+
+        if os.environ.get("LTX_DEBUG_FIXED_NOISE") == "1":
+            print(f"[LTX-2 CP4] audio_loss={audio_loss.mean().item():.8f}")
 
         # Combined loss [B,]
         return video_loss + audio_loss
