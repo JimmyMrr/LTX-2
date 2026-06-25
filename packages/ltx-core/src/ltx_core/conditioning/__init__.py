@@ -7,7 +7,6 @@ from ltx_core.conditioning.types import (
     ConditioningItemAttentionStrengthWrapper,
     VideoConditionByKeyframeIndex,
     VideoConditionByLatentIndex,
-    VideoConditionByMask,
     VideoConditionByReferenceLatent,
 )
 
@@ -18,6 +17,5 @@ __all__ = [
     "ConditioningItemAttentionStrengthWrapper",
     "VideoConditionByKeyframeIndex",
     "VideoConditionByLatentIndex",
-    "VideoConditionByMask",
     "VideoConditionByReferenceLatent",
 ]

@@ -34,35 +34,28 @@ class TrainingStrategyConfigBase(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    name: Literal["text_to_video", "video_to_video", "flexible"] = Field(
+    name: Literal["text_to_video", "video_to_video"] = Field(
         description="Unique name identifying the training strategy type"
     )
-
-    @abstractmethod
-    def get_data_sources(self) -> dict[str, str]:
-        """Get the required data sources for this strategy.
-        Returns a mapping of directory name (relative to ``preprocessed_data_root``)
-        to the dataset output key under which that directory's contents are exposed.
-        This is the single source of truth for which directories the strategy needs:
-        it drives both dataset wiring (in the trainer) and existence validation
-        (in ``LtxTrainerConfig``).
-        """
 
 
 @dataclass
 class ModelInputs:
     """Container for model inputs using the Modality-based interface."""
 
-    video: Modality | None
+    video: Modality
     audio: Modality | None
 
     # Training targets (for loss computation)
-    video_targets: Tensor | None
+    video_targets: Tensor
     audio_targets: Tensor | None
 
-    # Masks for loss computation (True = compute loss for this token)
-    video_loss_mask: Tensor | None
+    # Masks for loss computation
+    video_loss_mask: Tensor  # Boolean mask: True = compute loss for this token
     audio_loss_mask: Tensor | None
+
+    # Metadata needed for loss computation in some strategies
+    ref_seq_len: int | None = None  # For IC-LoRA: length of reference sequence
 
 
 class TrainingStrategy(ABC):
@@ -79,6 +72,24 @@ class TrainingStrategy(ABC):
         self.config = config
         self._video_patchifier = VideoLatentPatchifier(patch_size=1)
         self._audio_patchifier = AudioPatchifier(patch_size=1)
+
+    @property
+    def requires_audio(self) -> bool:
+        """Whether this training strategy requires audio components.
+        Override this property in subclasses that support audio training.
+        The trainer uses this to determine whether to load audio VAE and vocoder.
+        Returns:
+            True if audio components should be loaded, False otherwise.
+        """
+        return False
+
+    @abstractmethod
+    def get_data_sources(self) -> list[str] | dict[str, str]:
+        """Get the required data sources for this training strategy.
+        Returns:
+            Either a list of data directory names (where output keys match directory names)
+            or a dictionary mapping data directory names to custom output keys for the dataset
+        """
 
     @abstractmethod
     def prepare_training_inputs(
@@ -134,6 +145,7 @@ class TrainingStrategy(ABC):
         batch_size: int,
         fps: float,
         device: torch.device,
+        dtype: torch.dtype,
     ) -> Tensor:
         """Generate video position embeddings using ltx_core's native implementation.
         Args:
@@ -143,8 +155,9 @@ class TrainingStrategy(ABC):
             batch_size: Batch size
             fps: Frames per second
             device: Target device
+            dtype: Target dtype
         Returns:
-            Position tensor of shape [B, 3, seq_len, 2] (float32)
+            Position tensor of shape [B, 3, seq_len, 2]
         """
         latent_coords = self._video_patchifier.get_patch_grid_bounds(
             output_shape=VideoLatentShape(
@@ -162,7 +175,7 @@ class TrainingStrategy(ABC):
             latent_coords=latent_coords,
             scale_factors=VIDEO_SCALE_FACTORS,
             causal_fix=True,
-        ).float()
+        ).to(dtype)
 
         # Scale temporal dimension by 1/fps to get time in seconds
         pixel_coords[:, 0, ...] = pixel_coords[:, 0, ...] / fps
@@ -174,12 +187,14 @@ class TrainingStrategy(ABC):
         num_time_steps: int,
         batch_size: int,
         device: torch.device,
+        dtype: torch.dtype,
     ) -> Tensor:
         """Generate audio position embeddings using ltx_core's native implementation.
         Args:
             num_time_steps: Number of audio time steps (T, not T*mel_bins)
             batch_size: Batch size
             device: Target device
+            dtype: Target dtype
         Returns:
             Position tensor of shape [B, 1, num_time_steps, 2]
         Note:
@@ -189,7 +204,7 @@ class TrainingStrategy(ABC):
         """
         mel_bins = 16
 
-        return self._audio_patchifier.get_patch_grid_bounds(
+        latent_coords = self._audio_patchifier.get_patch_grid_bounds(
             output_shape=AudioLatentShape(
                 frames=num_time_steps,
                 mel_bins=mel_bins,
@@ -198,6 +213,8 @@ class TrainingStrategy(ABC):
             ),
             device=device,
         )
+
+        return latent_coords.to(dtype)
 
     @staticmethod
     def _create_per_token_timesteps(conditioning_mask: Tensor, sampled_sigma: Tensor) -> Tensor:

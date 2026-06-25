@@ -310,7 +310,7 @@ def main(
         help="Device to use for computation",
     ),
     vae_tiling: bool = typer.Option(
-        default=True,
+        default=False,
         help="Enable VAE tiling for larger video resolutions",
     ),
     seed: int | None = typer.Option(

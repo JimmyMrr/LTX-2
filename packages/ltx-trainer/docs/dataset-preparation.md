@@ -33,33 +33,41 @@ uv run python scripts/split_scenes.py --help
 
 If your dataset doesn't include captions, you can automatically generate them using multimodal models that understand both video and audio.
 
-The default `qwen_omni` backend talks to a local vLLM server, which you launch once in a separate terminal:
-
 ```bash
-# Terminal 1: start the captioner server (stays running)
-uv run python scripts/serve_captioner.py
-```
-
-```bash
-# Terminal 2: caption your videos
 uv run python scripts/caption_videos.py scenes_output_dir/ \
     --output scenes_output_dir/dataset.json
+```
+
+If you're running into VRAM issues, try enabling 8-bit quantization to reduce memory usage:
+
+```bash
+uv run python scripts/caption_videos.py scenes_output_dir/ \
+    --output scenes_output_dir/dataset.json \
+    --use-8bit
 ```
 
 This will create a `dataset.json` file containing video paths and their captions.
 
 **Captioning options:**
 
-| Option             | Description                                                      |
-| ------------------ | --------------------------------------------------------------- |
-| `--captioner-type` | `qwen_omni` (default, local vLLM server) or `gemini_flash` (API) |
-| `--vllm-url`       | Base URL of the vLLM server (default `http://127.0.0.1:8001/v1`) |
-| `--override`       | Re-caption files that already have captions                     |
-| `--api-key`        | Gemini API key (else `GEMINI_API_KEY`/`GOOGLE_API_KEY`; with no key, uses gcloud/Vertex AI auth) |
+
+| Option             | Description                                                |
+| ------------------ | ---------------------------------------------------------- |
+| `--captioner-type` | `qwen_omni` (default, local) or `gemini_flash` (API)       |
+| `--use-8bit`       | Enable 8-bit quantization for lower VRAM usage             |
+| `--no-audio`       | Disable audio processing (video-only captions)             |
+| `--override`       | Re-caption files that already have captions                |
+| `--api-key`        | API key for Gemini Flash (or set `GOOGLE_API_KEY` env var) |
+
 
 **Caption format:**
 
-Each caption is a single, detailed paragraph describing both the visual content and the audio (speech, music, ambient sounds) of the clip. See the [Utility Scripts Reference](utility-scripts.md#automatic-video-captioning) for backend setup and the full list of options.
+The captioner produces structured captions with sections for:
+
+- **Visual content**: People, objects, actions, settings, colors, movements
+- **Speech transcription**: Word-for-word transcription of spoken content
+- **Sounds**: Music, ambient sounds, sound effects
+- **On-screen text**: Any visible text overlays
 
 > [!NOTE]
 > The automatically generated captions may contain inaccuracies or hallucinated content.
@@ -72,7 +80,7 @@ This step preprocesses your video dataset by:
 1. Resizing and cropping videos to fit specified resolution buckets
 2. Computing and caching video latent representations
 3. Computing and caching text embeddings for captions
-4. Extracting and caching audio latents from videos (automatic, use `--skip-audio` to disable)
+4. (Optional) Computing and caching audio latents
 
 > [!WARNING]
 > Very large videos (especially high spatial resolution and/or many frames) can cause GPU out-of-memory (OOM)
@@ -89,9 +97,17 @@ uv run python scripts/process_dataset.py dataset.json \
     --text-encoder-path /path/to/gemma-model
 ```
 
-Audio latents are automatically extracted from video files — no extra flag is needed. Use `--skip-audio`
-to disable this. For standalone audio files (`.wav`), use the `audio` column in your dataset instead
-(see [Convention-Based Column Detection](#convention-based-column-detection) below).
+### With Audio Processing
+
+For audio-video training, add the `--with-audio` flag:
+
+```bash
+uv run python scripts/process_dataset.py dataset.json \
+    --resolution-buckets "960x544x49" \
+    --model-path /path/to/ltx-2-model.safetensors \
+    --text-encoder-path /path/to/gemma-model \
+    --with-audio
+```
 
 ### 🚀 Multi-GPU Preprocessing
 
@@ -110,7 +126,7 @@ Outputs are written atomically (via a per-process temporary file, then renamed),
 corrupt files. By default a rerun **resumes** — items whose output `.pt` already exists are skipped.
 
 > [!IMPORTANT]
-> Pass **`--overwrite`** when rerunning with changed parameters (different model checkpoint, resolution buckets,
+> Pass `**--overwrite`** when rerunning with changed parameters (different model checkpoint, resolution buckets,
 > text encoder, `--lora-trigger`, etc.). Without it the script keeps the stale outputs from the previous run.
 >
 > ```bash
@@ -136,7 +152,7 @@ The trainer supports videos, single images, or a mix of both in the same dataset
 > `--resolution-buckets "960x544x1;960x544x49"`. Images are automatically assigned to the `F=1` bucket and
 > videos to an `F>1` bucket.
 > - You **must** set `optimization.batch_size: 1` in your training config (see the warning under
-> [Resolution Buckets](#resolution-buckets)), since samples with different shapes cannot be collated into a
+> [Resolution Buckets](#-resolution-buckets)), since samples with different shapes cannot be collated into a
 > single batch. Use `gradient_accumulation_steps` if you need a larger effective batch.
 > - Per-step cost differs substantially between a single-frame sample and a many-frame sample, which can lead to
 > uneven gradient magnitudes across steps. Consider weighting the two subsets or tuning the learning rate if
@@ -144,24 +160,7 @@ The trainer supports videos, single images, or a mix of both in the same dataset
 > - If you prefer a fully officially-supported path, train two separate LoRAs (one on stills, one on video) and
 > stack them at inference.
 
-The dataset must be a CSV, JSON, or JSONL metadata file with columns for captions and media paths.
-
-#### Convention-Based Column Detection
-
-The preprocessing script automatically detects and processes columns based on their names. The following columns are recognized:
-
-| Column | Output Dir | Description |
-|--------|-----------|-------------|
-| `video` (or legacy `media_path`) | `latents/` | Target video to encode |
-| `audio` | `audio_latents/` | Explicit audio file (overrides auto-extraction from video) |
-| `caption` | `conditions/` | Text caption for the sample |
-| `reference_video` (or legacy `ref_media_path`) | `reference_latents/` | IC-LoRA reference video |
-| `reference_audio` | `reference_audio_latents/` | IC-LoRA reference audio |
-| `video_mask` | `video_masks/` | Binary mask for video inpainting |
-| `audio_mask` | `audio_masks/` | Binary mask for audio inpainting |
-
-> [!NOTE]
-> **Legacy column names:** `media_path` and `ref_media_path` are accepted as aliases for `video` and `reference_video` respectively. Existing datasets using these names will continue to work without modification.
+The dataset must be a CSV, JSON, or JSONL metadata file with columns for captions and video paths:
 
 **JSON format example:**
 
@@ -169,11 +168,11 @@ The preprocessing script automatically detects and processes columns based on th
 [
   {
     "caption": "A cat playing with a ball of yarn",
-    "video": "videos/cat_playing.mp4"
+    "media_path": "videos/cat_playing.mp4"
   },
   {
     "caption": "A dog running in the park",
-    "video": "videos/dog_running.mp4"
+    "media_path": "videos/dog_running.mp4"
   }
 ]
 ```
@@ -181,40 +180,16 @@ The preprocessing script automatically detects and processes columns based on th
 **JSONL format example:**
 
 ```jsonl
-{"caption": "A cat playing with a ball of yarn", "video": "videos/cat_playing.mp4"}
-{"caption": "A dog running in the park", "video": "videos/dog_running.mp4"}
+{"caption": "A cat playing with a ball of yarn", "media_path": "videos/cat_playing.mp4"}
+{"caption": "A dog running in the park", "media_path": "videos/dog_running.mp4"}
 ```
 
 **CSV format example:**
 
 ```csv
-caption,video
+caption,media_path
 "A cat playing with a ball of yarn","videos/cat_playing.mp4"
 "A dog running in the park","videos/dog_running.mp4"
-```
-
-**Additional dataset format examples:**
-
-Audio-only dataset:
-```json
-{"audio": "song.wav", "caption": "piano melody"}
-```
-
-V2V IC-LoRA with reference video:
-```json
-{"video": "clip.mp4", "reference_video": "depth.mp4", "caption": "depth to video"}
-```
-
-A2A IC-LoRA with reference audio:
-```json
-{"video": "clip.mp4", "reference_audio": "ref.wav", "caption": "match this style"}
-```
-This form auto-extracts the target audio from `clip.mp4`. For pure audio datasets, use `audio` plus
-`reference_audio` columns and preprocess with `--audio-durations`.
-
-Video inpainting with mask:
-```json
-{"video": "clip.mp4", "video_mask": "mask.mp4", "caption": "fill the sky"}
 ```
 
 ### 📐 Resolution Buckets
@@ -293,30 +268,11 @@ The preprocessed data is saved in a `.precomputed` directory:
 ```
 dataset/
 └── .precomputed/
-    ├── latents/                  # Video latents
-    ├── conditions/               # Text embeddings
-    ├── audio_latents/            # Audio latents (auto-extracted or explicit)
-    ├── reference_latents/        # Reference video latents (IC-LoRA)
-    ├── reference_audio_latents/  # Reference audio latents (audio IC-LoRA)
-    ├── video_masks/              # Video masks (inpainting)
-    └── audio_masks/              # Audio masks (audio inpainting)
+    ├── latents/            # Cached video latents
+    ├── conditions/         # Cached text embeddings
+    ├── audio_latents/      # (only if --with-audio) Cached audio latents
+    └── reference_latents/  # (only for IC-LoRA) Cached reference video latents
 ```
-
-Set `data.preprocessed_data_root` in your training config to this `.precomputed` directory — the parent directory that
-contains `latents/`, `conditions/`, and any mode-specific audio/reference/mask directories.
-
-## 🔊 Audio-Only Dataset Preprocessing
-
-For datasets containing only audio files (no `video` column), use `--audio-durations` to specify duration buckets:
-
-```bash
-uv run python scripts/process_dataset.py dataset.json \
-    --audio-durations "2.0;4.0;8.0" \
-    --model-path /path/to/ltx-2-model.safetensors \
-    --text-encoder-path /path/to/gemma-model
-```
-
-The `--audio-durations` flag provides duration buckets (in seconds) for audio-only datasets. Since there is no video column to derive timing from, explicit duration buckets are required.
 
 ## 🪄 IC-LoRA Reference Video Preprocessing
 
@@ -325,16 +281,14 @@ Reference videos provide the conditioning input while target videos represent th
 
 ### Dataset Format with Reference Videos
 
-The `reference_video` column is automatically detected by convention — no extra CLI flags are needed.
-
 **JSON format:**
 
 ```json
 [
   {
     "caption": "A cat playing with a ball of yarn",
-    "video": "videos/cat_playing.mp4",
-    "reference_video": "references/cat_playing_depth.mp4"
+    "media_path": "videos/cat_playing.mp4",
+    "reference_path": "references/cat_playing_depth.mp4"
   }
 ]
 ```
@@ -342,39 +296,32 @@ The `reference_video` column is automatically detected by convention — no extr
 **JSONL format:**
 
 ```jsonl
-{"caption": "A cat playing with a ball of yarn", "video": "videos/cat_playing.mp4", "reference_video": "references/cat_playing_depth.mp4"}
-{"caption": "A dog running in the park", "video": "videos/dog_running.mp4", "reference_video": "references/dog_running_depth.mp4"}
+{"caption": "A cat playing with a ball of yarn", "media_path": "videos/cat_playing.mp4", "reference_path": "references/cat_playing_depth.mp4"}
+{"caption": "A dog running in the park", "media_path": "videos/dog_running.mp4", "reference_path": "references/dog_running_depth.mp4"}
 ```
 
 ### Preprocessing with Reference Videos
 
-Convention-based detection means you just need the `reference_video` column in your dataset, and `process_dataset.py` will automatically detect and process it. No `--reference-column` flag is needed:
+To preprocess a dataset with reference videos, add the `--reference-column` argument specifying the name of the field
+in your dataset JSON/JSONL/CSV that contains the reference video paths:
 
 ```bash
 uv run python scripts/process_dataset.py dataset.json \
     --resolution-buckets "960x544x49" \
     --model-path /path/to/ltx-2-model.safetensors \
     --text-encoder-path /path/to/gemma-model \
-    --reference-downscale-factor 2 \
-    --reference-temporal-scale-factor 1
+    --reference-column "reference_path"
 ```
 
 This will create an additional `reference_latents/` directory containing the preprocessed reference video latents.
-Use `--reference-downscale-factor` for spatial subsampling and `--reference-temporal-scale-factor` for temporal
-subsampling. Validation reference conditions should use matching `downscale_factor` and `temporal_scale_factor` values.
-
-> [!NOTE]
-> **Legacy column names:** If your dataset uses `ref_media_path`, it is accepted as an alias for `reference_video`.
 
 ### Generating Reference Videos
 
 **Dataset Requirements for IC-LoRA:**
 
 - Your dataset must contain paired videos where each target video has a corresponding reference video
-- Reference and target videos should cover the same content. Reference videos can optionally be lower spatial
-  resolution or temporally subsampled (see Scaled Reference Conditioning in [Training Modes](training-modes.md)).
-- Both reference and target videos should be preprocessed together using the same target resolution buckets, plus any
-  reference scale factors you choose.
+- Reference and target videos must have *identical* resolution and length
+- Both reference and target videos should be preprocessed together using the same resolution buckets
 
 We provide an example script, `[scripts/compute_reference.py](../scripts/compute_reference.py)`, to generate reference
 videos for a given dataset. The default implementation generates Canny edge reference videos.
@@ -386,62 +333,11 @@ uv run python scripts/compute_reference.py scenes_output_dir/ \
 
 The script accepts a JSON file as the dataset configuration and updates it in-place by adding the filenames of the generated reference videos.
 
-> [!NOTE]
-> `compute_reference.py` writes generated references to the `reference_video` column, which `process_dataset.py`
-> detects automatically. The legacy `ref_media_path` column is also accepted.
-
 If you want to generate a different type of condition (depth maps, pose skeletons, etc.), modify or replace the `compute_reference()` function within this script.
 
 ### Example Dataset
 
 For reference, see our **[Canny Control Dataset](https://huggingface.co/datasets/Lightricks/Canny-Control-Dataset)** which demonstrates proper IC-LoRA dataset structure with paired videos and Canny edge maps.
-
-## 🎭 Mask Preprocessing for Inpainting
-
-For inpainting training with the `mask` condition type, provide `video_mask` or `audio_mask` columns in your dataset
-metadata. These columns point to mask media files (for example a mask image/video for video inpainting, or a waveform or
-`.pt` tensor for audio inpainting). `process_dataset.py` downsamples and thresholds them into per-sample `.pt` tensors
-under `video_masks/` or `audio_masks/`.
-
-### Processed Video Mask Format
-
-If you create masks manually instead of using `process_dataset.py`, save them as `.pt` files with the key `"mask"`
-containing a tensor of shape `[F, H, W]` where:
-
-- `F` = number of latent frames (temporal dimension)
-- `H` = latent height (pixel height / 32)
-- `W` = latent width (pixel width / 32)
-- Values are thresholded at `0.5`: values `> 0.5` are conditioning tokens (clean, excluded from loss),
-  and values `<= 0.5` are generated tokens (noised, contributes to loss).
-
-### Audio Mask Format
-
-Audio masks follow the same thresholding pattern as video masks but with shape `[T]` (temporal dimension only), where `T` is the number of audio latent frames. They are stored in `audio_masks/`.
-
-### Directory Structure
-
-Place masks in a directory within your preprocessed data root:
-
-```
-preprocessed_data_root/
-├── latents/          # Video latents
-├── conditions/       # Text embeddings
-├── video_masks/      # Video masks (one .pt per sample, matching latent filenames)
-└── audio_masks/      # Audio masks (one .pt per sample, matching latent filenames)
-```
-
-Then reference the mask directory in your training config:
-
-```yaml
-training_strategy:
-  name: "flexible"
-  video:
-    is_generated: true
-    latents_dir: "latents"
-    conditions:
-      - type: mask
-        mask_dir: "video_masks"
-```
 
 ## 🎯 LoRA Trigger Words
 
@@ -463,9 +359,9 @@ This acts as a trigger word that activates the LoRA during inference when you in
 
 ## 🔍 Decoding Videos for Verification
 
-If you add the `--decode` flag, the script will VAE-decode the precomputed video latents and save the resulting videos
-in `.precomputed/decoded_videos`. Reference video latents are decoded to `.precomputed/decoded_reference_videos` when
-present. To inspect audio latents, run `scripts/decode_latents.py` with `--with-audio`.
+If you add the `--decode` flag, the script will VAE-decode the precomputed latents and save the resulting videos
+in `.precomputed/decoded_videos`. When audio preprocessing is enabled (`--with-audio`), audio latents will also be
+decoded and saved to `.precomputed/decoded_audio`. This allows you to visually and audibly inspect the processed data.
 
 ```bash
 uv run python scripts/process_dataset.py dataset.json \
@@ -486,4 +382,6 @@ Once your dataset is preprocessed, you can proceed to:
 - Start training with the [Training Guide](training-guide.md)
 
 > [!TIP]
-> The `flexible` strategy supports masks for inpainting (`mask` condition type) and spatial crop regions for outpainting (`spatial_crop` condition type) out of the box. For other custom preprocessing needs, see [Custom Training Strategies](custom-training-strategies.md).
+> If your training recipe requires additional preprocessed data (e.g., masks, conditioning signals), see
+> [Implementing Custom Training Strategies](custom-training-strategies.md) for guidance on extending the
+> preprocessing pipeline.
