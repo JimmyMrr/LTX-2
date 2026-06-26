@@ -38,6 +38,11 @@ class EmbeddingsProcessorConfigurator(ModelConfigurator[EmbeddingsProcessor]):
     def from_config(cls, config: dict) -> EmbeddingsProcessor:
         transformer_config = config.get("transformer", {})
 
+        print(f"Upstream transformer_config keys: {sorted(transformer_config.keys())}")
+        print(f"Upstream connector_apply_gated_attention: {transformer_config.get('connector_apply_gated_attention', 'NOT_SET')}")
+        print(f"Upstream connector_num_attention_heads: {transformer_config.get('connector_num_attention_heads', 'NOT_SET')}")
+        print(f"Upstream audio_connector_num_attention_heads: {transformer_config.get('audio_connector_num_attention_heads', 'NOT_SET')}")
+
         # Create video embeddings connector (always needed)
         video_connector = Embeddings1DConnectorConfigurator.from_config(config)
 

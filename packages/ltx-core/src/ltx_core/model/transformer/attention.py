@@ -482,6 +482,8 @@ class Attention(torch.nn.Module):
 
         self.to_out = torch.nn.Sequential(torch.nn.Linear(inner_dim, query_dim, bias=True), torch.nn.Identity())
 
+    _attn_debug_counter = 0
+
     def forward(
         self,
         x: torch.Tensor,
@@ -518,21 +520,103 @@ class Attention(torch.nn.Module):
         Returns:
             Output tensor of shape ``(B, T, query_dim)``.
         """
+        import os as _os
+
+        _dbg = _os.environ.get("LTX_DEBUG_FIXED_NOISE") == "1"
+        _attn_idx = Attention._attn_debug_counter
+        Attention._attn_debug_counter += 1
+
+        is_cross_attention = context is not None
         context = x if context is None else context
         use_attention = not all_perturbed
 
+        if _dbg and _attn_idx < 6:
+            _w = self.to_v.weight
+            _b = self.to_v.bias
+            print(
+                f"[LTX-2 ATTN-{_attn_idx}] to_v type={type(self.to_v).__name__}, "
+                f"weight shape={list(_w.shape)}, dtype={_w.dtype}, "
+                f"mean={_w.float().mean().item():.8f}, std={_w.float().std().item():.8f}"
+            )
+            if _b is not None:
+                print(
+                    f"[LTX-2 ATTN-{_attn_idx}] to_v.bias: shape={list(_b.shape)}, dtype={_b.dtype}, "
+                    f"mean={_b.float().mean().item():.8f}, std={_b.float().std().item():.8f}"
+                )
+            if hasattr(self.to_v, 'lora_A') and hasattr(self.to_v, 'lora_B'):
+                for _adapter_name in self.to_v.lora_A:
+                    _la = self.to_v.lora_A[_adapter_name].weight
+                    _lb = self.to_v.lora_B[_adapter_name].weight
+                    _scaling = self.to_v.scaling.get(_adapter_name, 1.0)
+                    print(
+                        f"[LTX-2 ATTN-{_attn_idx}] to_v lora_A[{_adapter_name}]: "
+                        f"shape={list(_la.shape)}, mean={_la.float().mean().item():.8f}, "
+                        f"lora_B: shape={list(_lb.shape)}, mean={_lb.float().mean().item():.8f}, "
+                        f"abs_max={_lb.float().abs().max().item():.8f}, scaling={_scaling}"
+                    )
+            print(
+                f"[LTX-2 ATTN-{_attn_idx}] context(input to to_v): "
+                f"shape={list(context.shape)}, dtype={context.dtype}, "
+                f"mean={context.float().mean().item():.8f}, std={context.float().std().item():.8f}"
+            )
+
         v = self.to_v(context)
+
+        if _dbg and _attn_idx < 6:
+            print(
+                f"[LTX-2 ATTN-{_attn_idx}] v: shape={list(v.shape)}, dtype={v.dtype}, "
+                f"mean={v.float().mean().item():.8f}, std={v.float().std().item():.8f}, "
+                f"is_cross={is_cross_attention}"
+            )
 
         if not use_attention:
             out = v
         else:
+            if _dbg and _attn_idx < 6:
+                _wq = self.to_q.weight
+                _wk = self.to_k.weight
+                print(
+                    f"[LTX-2 ATTN-{_attn_idx}] to_q.weight: shape={list(_wq.shape)}, dtype={_wq.dtype}, "
+                    f"mean={_wq.float().mean().item():.8f}, std={_wq.float().std().item():.8f}"
+                )
+                print(
+                    f"[LTX-2 ATTN-{_attn_idx}] to_k.weight: shape={list(_wk.shape)}, dtype={_wk.dtype}, "
+                    f"mean={_wk.float().mean().item():.8f}, std={_wk.float().std().item():.8f}"
+                )
+
             q = self.to_q(x)
             k = self.to_k(context)
+
+            if _dbg and _attn_idx < 6:
+                print(
+                    f"[LTX-2 ATTN-{_attn_idx}] q: shape={list(q.shape)}, dtype={q.dtype}, "
+                    f"mean={q.float().mean().item():.8f}, std={q.float().std().item():.8f}"
+                )
+                print(
+                    f"[LTX-2 ATTN-{_attn_idx}] k: shape={list(k.shape)}, dtype={k.dtype}, "
+                    f"mean={k.float().mean().item():.8f}, std={k.float().std().item():.8f}"
+                )
+
             q, k = self.preattention_function(q, k, self, mask, pe, k_pe)
+
+            if _dbg and _attn_idx < 6:
+                print(
+                    f"[LTX-2 ATTN-{_attn_idx}] after preattention (RoPE): "
+                    f"q.mean={q.float().mean().item():.8f}, k.mean={k.float().mean().item():.8f}"
+                )
+
             if mask is None:
                 out = self.attention_function(q, k, v, self.heads)  # (B, T, H*D)
             else:
                 out = self.masked_attention_function(q, k, v, self.heads, mask)
+
+            if _dbg and _attn_idx < 6:
+                print(
+                    f"[LTX-2 ATTN-{_attn_idx}] after attention: "
+                    f"shape={list(out.shape)}, mean={out.float().mean().item():.8f}, "
+                    f"std={out.float().std().item():.8f}, "
+                    f"attn_fn={type(self.attention_function).__name__}"
+                )
 
             if perturbation_mask is not None:
                 out = out * perturbation_mask + v * (1 - perturbation_mask)
@@ -541,4 +625,13 @@ class Attention(torch.nn.Module):
         if self.to_gate_logits is not None:
             out = self.gated_attention_function(x, out, self)
 
-        return self.to_out(out)
+        out = self.to_out(out)
+
+        if _dbg and _attn_idx < 6:
+            print(
+                f"[LTX-2 ATTN-{_attn_idx}] after to_out: "
+                f"shape={list(out.shape)}, mean={out.float().mean().item():.8f}, "
+                f"std={out.float().std().item():.8f}"
+            )
+
+        return out

@@ -163,6 +163,14 @@ class Embeddings1DConnector(torch.nn.Module):
         import os as _os
         _dbg = _os.environ.get("LTX_DEBUG_FIXED_NOISE") == "1"
 
+        if _dbg:
+            for i, block in enumerate(self.transformer_1d_blocks):
+                for name, param in block.named_parameters():
+                    print(
+                        f"[LTX-2 conn] weight block_{i}.{name}: shape={list(param.shape)}, "
+                        f"mean={param.float().mean():.8f}, std={param.float().std():.8f}"
+                    )
+
         if self.num_learnable_registers:
             if _dbg:
                 lr = self.learnable_registers

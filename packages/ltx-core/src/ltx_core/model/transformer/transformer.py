@@ -1,3 +1,4 @@
+import os
 from dataclasses import dataclass, field, replace
 
 import torch
@@ -82,6 +83,8 @@ class TransformerOpsConfig:
 # Frozen, so safe to share as a default argument across callers that want the
 # stock PyTorch ops without explicit construction.
 DEFAULT_TRANSFORMER_OPS = TransformerOpsConfig()
+
+_block_debug_counter = 0
 
 
 class BasicAVTransformerBlock(torch.nn.Module):
@@ -254,6 +257,11 @@ class BasicAVTransformerBlock(torch.nn.Module):
         video: TransformerArgs | None,
         audio: TransformerArgs | None,
     ) -> tuple[TransformerArgs | None, TransformerArgs | None]:
+        global _block_debug_counter
+        _dbg = os.environ.get("LTX_DEBUG_FIXED_NOISE") == "1"
+        _blk_idx = _block_debug_counter
+        _block_debug_counter += 1
+
         if video is None and audio is None:
             raise ValueError("At least one of video or audio must be provided")
 
@@ -270,8 +278,32 @@ class BasicAVTransformerBlock(torch.nn.Module):
             vshift_msa, vscale_msa, vgate_msa = self.get_ada_values(
                 self.scale_shift_table, vx.shape[0], video.timesteps, slice(0, 3)
             )
+
+            if _dbg and _blk_idx == 0:
+                print(
+                    f"[LTX-2 BLK-{_blk_idx}] scale_shift_table: dtype={self.scale_shift_table.dtype}, "
+                    f"mean={self.scale_shift_table.float().mean().item():.8f}, "
+                    f"std={self.scale_shift_table.float().std().item():.8f}"
+                )
+                print(
+                    f"[LTX-2 BLK-{_blk_idx}] timesteps: dtype={video.timesteps.dtype}, "
+                    f"mean={video.timesteps.float().mean().item():.8f}"
+                )
+                print(
+                    f"[LTX-2 BLK-{_blk_idx}] vshift_msa: mean={vshift_msa.float().mean().item():.8f}, "
+                    f"vscale_msa: mean={vscale_msa.float().mean().item():.8f}, "
+                    f"vgate_msa: mean={vgate_msa.float().mean().item():.8f}"
+                )
+
             norm_vx = self.ada_zero_function(vx, self.norm_eps, vscale_msa, vshift_msa)
             del vshift_msa, vscale_msa
+
+            if _dbg and _blk_idx == 0:
+                print(
+                    f"[LTX-2 BLK-{_blk_idx}] norm_vx: dtype={norm_vx.dtype}, "
+                    f"mean={norm_vx.float().mean().item():.8f}, "
+                    f"std={norm_vx.float().std().item():.8f}"
+                )
 
             vx_msa_out = self.attn1(
                 norm_vx,

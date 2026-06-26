@@ -355,6 +355,9 @@ class LTXModel(torch.nn.Module):
         modality's ``TransformerArgs`` so the block forward has no per-block
         identity to specialise on — all blocks share a single Dynamo cache slot.
         """
+        import os as _os
+        _dbg = _os.environ.get("LTX_DEBUG_FIXED_NOISE") == "1"
+
         if perturbations is None:
             batch_size = (video or audio).x.shape[0]
             perturbations = BatchedPerturbationConfig.empty(batch_size)
@@ -377,6 +380,25 @@ class LTXModel(torch.nn.Module):
                     cross_attn_type=PerturbationType.SKIP_V2A_CROSS_ATTN,
                 )
 
+            if _dbg and video is not None and block_idx == 0:
+                print(
+                    f"[LTX-2 CP3.6-before-block{block_idx}] after block_input_processor: "
+                    f"x.dtype={video.x.dtype}, shape={list(video.x.shape)}, "
+                    f"mean={video.x.float().mean().item():.8f}, std={video.x.float().std().item():.8f}"
+                )
+                if hasattr(video, 'timesteps'):
+                    print(
+                        f"[LTX-2 CP3.6-before-block{block_idx}] timesteps: "
+                        f"shape={list(video.timesteps.shape)}, "
+                        f"mean={video.timesteps.float().mean().item():.8f}"
+                    )
+                if hasattr(video, 'context'):
+                    print(
+                        f"[LTX-2 CP3.6-before-block{block_idx}] context: "
+                        f"shape={list(video.context.shape)}, "
+                        f"mean={video.context.float().mean().item():.8f}"
+                    )
+
             if self._enable_gradient_checkpointing and self.training:
                 video, audio = torch.utils.checkpoint.checkpoint(
                     block,
@@ -386,6 +408,13 @@ class LTXModel(torch.nn.Module):
                 )
             else:
                 video, audio = block(video=video, audio=audio)
+
+            if _dbg and video is not None and block_idx in (0, 1, 2, 23, 47):
+                print(
+                    f"[LTX-2 CP3.6-layer{block_idx}] x.dtype={video.x.dtype}, "
+                    f"shape={list(video.x.shape)}, "
+                    f"mean={video.x.float().mean().item():.8f}, std={video.x.float().std().item():.8f}"
+                )
 
         return video, audio
 
@@ -417,19 +446,90 @@ class LTXModel(torch.nn.Module):
         Returns:
             Processed output tensors
         """
+        import os as _os
+
+        from ltx_core.model.transformer.attention import Attention
+        import ltx_core.model.transformer.transformer as _transformer_module
+
+        Attention._attn_debug_counter = 0
+        _transformer_module._block_debug_counter = 0
+
+        _dbg = _os.environ.get("LTX_DEBUG_FIXED_NOISE") == "1"
+
         if not self.model_type.is_video_enabled() and video is not None:
             raise ValueError("Video is not enabled for this model")
         if not self.model_type.is_audio_enabled() and audio is not None:
             raise ValueError("Audio is not enabled for this model")
 
+        if _dbg:
+            _param_dtype = next(self.parameters()).dtype
+            _gc = getattr(self, "gradient_checkpointing", None)
+            _gc2 = getattr(self, "_enable_gradient_checkpointing", None)
+            print(
+                f"[LTX-2 CP3.6-pre] param_dtype={_param_dtype}, "
+                f"gradient_checkpointing={_gc}, _enable_gradient_checkpointing={_gc2}, "
+                f"training={self.training}"
+            )
+            if video is not None:
+                print(
+                    f"[LTX-2 CP3.6-pre] video.latent.dtype={video.latent.dtype}, "
+                    f"video.context.dtype={video.context.dtype}, "
+                    f"video.timesteps.dtype={video.timesteps.dtype}, "
+                    f"video.positions.dtype={video.positions.dtype}"
+                )
+
         video_args = self.video_args_preprocessor.prepare(video, audio) if video is not None else None
         audio_args = self.audio_args_preprocessor.prepare(audio, video) if audio is not None else None
+
+        if _dbg and video_args is not None:
+            print(
+                f"[LTX-2 CP3.6a] After preprocessor: x.dtype={video_args.x.dtype}, "
+                f"x: shape={list(video_args.x.shape)}, "
+                f"mean={video_args.x.float().mean().item():.8f}, std={video_args.x.float().std().item():.8f}"
+            )
+            print(
+                f"[LTX-2 CP3.6a] context.dtype={video_args.context.dtype}, "
+                f"context: mean={video_args.context.float().mean().item():.8f}, "
+                f"std={video_args.context.float().std().item():.8f}"
+            )
+            print(
+                f"[LTX-2 CP3.6a] embedded_timestep.dtype={video_args.embedded_timestep.dtype}, "
+                f"embedded_timestep: mean={video_args.embedded_timestep.float().mean().item():.8f}, "
+                f"std={video_args.embedded_timestep.float().std().item():.8f}"
+            )
+            cos_freq, sin_freq = video_args.positional_embeddings
+            print(
+                f"[LTX-2 CP3.6a] cos_freq.dtype={cos_freq.dtype}, "
+                f"cos_freq: mean={cos_freq.float().mean().item():.8f}, "
+                f"sin_freq: mean={sin_freq.float().mean().item():.8f}"
+            )
+            if video_args.context_mask is not None:
+                print(
+                    f"[LTX-2 CP3.6a] context_mask.dtype={video_args.context_mask.dtype}, "
+                    f"shape={list(video_args.context_mask.shape)}, "
+                    f"sum={video_args.context_mask.float().sum().item():.2f}"
+                )
+            else:
+                print("[LTX-2 CP3.6a] context_mask=None")
+
         # Process transformer blocks
         video_out, audio_out = self._process_transformer_blocks(
             video=video_args,
             audio=audio_args,
             perturbations=perturbations,
         )
+
+        if _dbg and video_out is not None:
+            print(
+                f"[LTX-2 CP3.6b] After transformer blocks: x.dtype={video_out.x.dtype}, "
+                f"x: shape={list(video_out.x.shape)}, "
+                f"mean={video_out.x.float().mean().item():.8f}, std={video_out.x.float().std().item():.8f}"
+            )
+            print(
+                f"[LTX-2 CP3.6b] embedded_timestep.dtype={video_out.embedded_timestep.dtype}, "
+                f"embedded_timestep: mean={video_out.embedded_timestep.float().mean().item():.8f}, "
+                f"std={video_out.embedded_timestep.float().std().item():.8f}"
+            )
 
         # Process output
         vx = (
@@ -439,6 +539,18 @@ class LTXModel(torch.nn.Module):
             if video_out is not None
             else None
         )
+
+        if _dbg and vx is not None:
+            print(
+                f"[LTX-2 CP3.6c] After _process_output: vx.dtype={vx.dtype}, "
+                f"vx: shape={list(vx.shape)}, "
+                f"mean={vx.float().mean().item():.8f}, std={vx.float().std().item():.8f}"
+            )
+            print(
+                f"[LTX-2 CP3.6c] scale_shift_table.dtype={self.scale_shift_table.dtype}, "
+                f"norm_out.weight.dtype={self.norm_out.weight.dtype if self.norm_out.weight is not None else 'None'}"
+            )
+
         ax = (
             self._process_output(
                 self.audio_scale_shift_table,

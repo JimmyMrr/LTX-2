@@ -374,6 +374,10 @@ class LtxvTrainer:
             print(f"[LTX-2 CP0] connector_weight: dtype={first_param.dtype}, "
                   f"mean={first_param.float().mean():.8f}, std={first_param.float().std():.8f}")
 
+        print(f"Upstream connector inner_dim={self._embeddings_processor.video_connector.inner_dim}, "
+              f"heads={self._embeddings_processor.video_connector.num_attention_heads}, "
+              f"video_input_proj={self._embeddings_processor.video_input_proj is not None}")
+
         video_embeds, audio_embeds, attention_mask = self._embeddings_processor.create_embeddings(
             video_features, audio_features, additive_mask
         )
@@ -394,6 +398,22 @@ class LtxvTrainer:
         # Use strategy to prepare training inputs (returns ModelInputs with Modality objects)
         model_inputs = self._training_strategy.prepare_training_inputs(batch, self._timestep_sampler)
 
+        if os.environ.get("LTX_DEBUG_FIXED_NOISE") == "1":
+            print(f"[LTX-2 CP3.1] latent_tokens: shape={list(model_inputs.video.latent.shape)}, "
+                  f"mean={model_inputs.video.latent.float().mean().item():.8f}, std={model_inputs.video.latent.float().std().item():.8f}")
+            print(f"[LTX-2 CP3.2] timesteps: shape={list(model_inputs.video.timesteps.shape)}, "
+                  f"mean={model_inputs.video.timesteps.float().mean().item():.8f}, std={model_inputs.video.timesteps.float().std().item():.8f}")
+            print(f"[LTX-2 CP3.3] positions: shape={list(model_inputs.video.positions.shape)}, "
+                  f"mean={model_inputs.video.positions.float().mean().item():.8f}, std={model_inputs.video.positions.float().std().item():.8f}")
+            print(f"[LTX-2 CP3.4] video_modality.latent: shape={list(model_inputs.video.latent.shape)}, "
+                  f"mean={model_inputs.video.latent.float().mean().item():.8f}, std={model_inputs.video.latent.float().std().item():.8f}")
+            print(f"[LTX-2 CP3.4] video_modality.context: shape={list(model_inputs.video.context.shape)}, "
+                  f"mean={model_inputs.video.context.float().mean().item():.8f}, std={model_inputs.video.context.float().std().item():.8f}")
+            print(f"[LTX-2 CP3.4] video_modality.sigma: {model_inputs.video.sigma}")
+            print(f"[LTX-2 CP3.4] video_modality.timesteps: shape={list(model_inputs.video.timesteps.shape)}, "
+                  f"mean={model_inputs.video.timesteps.float().mean().item():.8f}")
+            print(f"[LTX-2 CP3.5] Before transformer.forward, audio_modality={'None' if model_inputs.audio is None else 'present'}")
+
         # Run transformer forward pass with Modality-based interface
         video_pred, audio_pred = self._transformer(
             video=model_inputs.video,
@@ -402,11 +422,19 @@ class LtxvTrainer:
         )
 
         if os.environ.get("LTX_DEBUG_FIXED_NOISE") == "1":
+            if video_pred is not None:
+                print(f"[LTX-2 CP3.6] After transformer.forward, video_pred: shape={list(video_pred.shape)}, "
+                      f"mean={video_pred.float().mean().item():.8f}, std={video_pred.float().std().item():.8f}")
+            else:
+                print(f"[LTX-2 CP3.6] After transformer.forward, video_pred: None")
+            if audio_pred is not None:
+                print(f"[LTX-2 CP3.6] After transformer.forward, audio_pred: shape={list(audio_pred.shape)}, "
+                      f"mean={audio_pred.float().mean().item():.8f}, std={audio_pred.float().std().item():.8f}")
             print(f"[LTX-2 CP3] video_pred: shape={list(video_pred.shape)}, "
-                  f"mean={video_pred.float().mean():.8f}, std={video_pred.float().std():.8f}")
+                  f"mean={video_pred.float().mean().item():.8f}, std={video_pred.float().std().item():.8f}")
             if audio_pred is not None:
                 print(f"[LTX-2 CP3] audio_pred: shape={list(audio_pred.shape)}, "
-                      f"mean={audio_pred.float().mean():.8f}, std={audio_pred.float().std():.8f}")
+                      f"mean={audio_pred.float().mean().item():.8f}, std={audio_pred.float().std().item():.8f}")
 
         # Use strategy to compute loss (returns per-element [B,] for sigma-bucket tracking)
         loss = self._training_strategy.compute_loss(video_pred, audio_pred, model_inputs)
