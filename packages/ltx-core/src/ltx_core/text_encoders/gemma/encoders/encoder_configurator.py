@@ -52,10 +52,6 @@ class EmbeddingsProcessorConfigurator(ModelConfigurator[EmbeddingsProcessor]):
         # Create feature extractor
         feature_extractor = _create_feature_extractor(transformer_config)
 
-        # NOTE: Projection layers (video_input_proj, audio_input_proj) are NOT created here
-        # because this runs inside torch.device("meta") context. They are created after weight
-        # loading in load_embeddings_processor() on the correct device.
-
         return EmbeddingsProcessor(
             video_connector=video_connector,
             audio_connector=audio_connector,

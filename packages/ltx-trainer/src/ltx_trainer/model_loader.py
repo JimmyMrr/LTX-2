@@ -236,31 +236,6 @@ def load_text_encoder(
     return text_encoder
 
 
-def _create_identity_projection(input_dim: int, output_dim: int, device: torch.device, dtype: torch.dtype) -> torch.nn.Linear:
-    """Create a linear projection initialized with a truncated identity matrix."""
-    proj = torch.nn.Linear(input_dim, output_dim, bias=False, device=device, dtype=dtype)
-    with torch.no_grad():
-        identity = torch.zeros(output_dim, input_dim, device=device, dtype=dtype)
-        min_dim = min(input_dim, output_dim)
-        for i in range(min_dim):
-            identity[i, i] = 1.0
-        proj.weight.copy_(identity)
-    return proj
-
-
-def _get_fe_output_dim(feature_extractor: torch.nn.Module | None, modality: str) -> int | None:
-    """Infer feature extractor output dimension from its weights."""
-    if feature_extractor is None:
-        return None
-    if hasattr(feature_extractor, "aggregate_embed"):
-        return feature_extractor.aggregate_embed.out_features
-    if modality == "video" and hasattr(feature_extractor, "video_aggregate_embed"):
-        return feature_extractor.video_aggregate_embed.out_features
-    if modality == "audio" and hasattr(feature_extractor, "audio_aggregate_embed"):
-        return feature_extractor.audio_aggregate_embed.out_features
-    return None
-
-
 def load_embeddings_processor(
     checkpoint_path: str | Path,
     device: Device = "cpu",
@@ -282,34 +257,11 @@ def load_embeddings_processor(
 
     torch_device = _to_torch_device(device)
 
-    model = SingleGPUModelBuilder(
+    return SingleGPUModelBuilder(
         model_path=str(checkpoint_path),
         model_class_configurator=EmbeddingsProcessorConfigurator,
         model_sd_ops=EMBEDDINGS_PROCESSOR_KEY_OPS,
     ).build(device=torch_device, dtype=dtype)
-
-    # Create projection layers AFTER weight loading (on correct device, not meta).
-    # This bridges dimension mismatch between feature extractor output and connector inner_dim
-    # (e.g., LTX-2.3 22B: feature extractor outputs 3840, connector expects 4096).
-    video_fe_dim = _get_fe_output_dim(model.feature_extractor, "video")
-    if video_fe_dim is not None and video_fe_dim != model.video_connector.inner_dim:
-        logger.info(
-            f"Creating video_input_proj: {video_fe_dim} -> {model.video_connector.inner_dim}"
-        )
-        model.video_input_proj = _create_identity_projection(
-            video_fe_dim, model.video_connector.inner_dim, torch_device, dtype
-        )
-
-    audio_fe_dim = _get_fe_output_dim(model.feature_extractor, "audio")
-    if audio_fe_dim is not None and model.audio_connector is not None and audio_fe_dim != model.audio_connector.inner_dim:
-        logger.info(
-            f"Creating audio_input_proj: {audio_fe_dim} -> {model.audio_connector.inner_dim}"
-        )
-        model.audio_input_proj = _create_identity_projection(
-            audio_fe_dim, model.audio_connector.inner_dim, torch_device, dtype
-        )
-
-    return model
 
 
 # =============================================================================
