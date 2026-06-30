@@ -164,28 +164,31 @@ class Embeddings1DConnector(torch.nn.Module):
         _dbg = _os.environ.get("LTX_DEBUG_FIXED_NOISE") == "1"
 
         if _dbg:
-            for i, block in enumerate(self.transformer_1d_blocks):
-                for name, param in block.named_parameters():
-                    print(
-                        f"[LTX-2 conn] weight block_{i}.{name}: shape={list(param.shape)}, "
-                        f"mean={param.float().mean():.8f}, std={param.float().std():.8f}"
-                    )
+            with torch.no_grad():
+                for i, block in enumerate(self.transformer_1d_blocks):
+                    for name, param in block.named_parameters():
+                        print(
+                            f"[LTX-2 conn] weight block_{i}.{name}: shape={list(param.shape)}, "
+                            f"mean={param.float().mean():.8f}, std={param.float().std():.8f}"
+                        )
 
         if self.num_learnable_registers:
             if _dbg:
-                lr = self.learnable_registers
-                print(f"[LTX-2 conn] learnable_registers: shape={list(lr.shape)}, "
-                      f"dtype={lr.dtype}, mean={lr.float().mean():.8f}, std={lr.float().std():.8f}")
-                binary = (additive_attention_mask[:, 0, 0, :] >= 0)
-                print(f"[LTX-2 conn] additive_mask_binary_sum={binary.sum().item()}, "
-                      f"additive_mask_shape={list(additive_attention_mask.shape)}")
+                with torch.no_grad():
+                    lr = self.learnable_registers
+                    print(f"[LTX-2 conn] learnable_registers: shape={list(lr.shape)}, "
+                          f"dtype={lr.dtype}, mean={lr.float().mean():.8f}, std={lr.float().std():.8f}")
+                    binary = (additive_attention_mask[:, 0, 0, :] >= 0)
+                    print(f"[LTX-2 conn] additive_mask_binary_sum={binary.sum().item()}, "
+                          f"additive_mask_shape={list(additive_attention_mask.shape)}")
             hidden_states, additive_attention_mask = self._replace_padded_with_learnable_registers(
                 hidden_states, additive_attention_mask
             )
 
         if _dbg:
-            print(f"[LTX-2 conn] after_registers: mean={hidden_states.float().mean():.8f}, "
-                  f"std={hidden_states.float().std():.8f}")
+            with torch.no_grad():
+                print(f"[LTX-2 conn] after_registers: mean={hidden_states.float().mean():.8f}, "
+                      f"std={hidden_states.float().std():.8f}")
 
         indices_grid = torch.arange(hidden_states.shape[1], dtype=torch.float32, device=hidden_states.device)
         indices_grid = indices_grid[None, None, :].expand(hidden_states.shape[0], -1, -1)
@@ -202,21 +205,24 @@ class Embeddings1DConnector(torch.nn.Module):
         )
 
         if _dbg:
-            cos_freq, sin_freq = freqs_cis
-            print(f"[LTX-2 conn] rope_cos: mean={cos_freq.float().mean():.8f}, "
-                  f"rope_sin: mean={sin_freq.float().mean():.8f}")
+            with torch.no_grad():
+                cos_freq, sin_freq = freqs_cis
+                print(f"[LTX-2 conn] rope_cos: mean={cos_freq.float().mean():.8f}, "
+                      f"rope_sin: mean={sin_freq.float().mean():.8f}")
 
         for i, block in enumerate(self.transformer_1d_blocks):
             hidden_states = block(hidden_states, additive_attention_mask=additive_attention_mask, pe=freqs_cis)
             if _dbg:
-                print(f"[LTX-2 conn] block_{i}: mean={hidden_states.float().mean():.8f}, "
-                      f"std={hidden_states.float().std():.8f}")
+                with torch.no_grad():
+                    print(f"[LTX-2 conn] block_{i}: mean={hidden_states.float().mean():.8f}, "
+                          f"std={hidden_states.float().std():.8f}")
 
         hidden_states = rms_norm(hidden_states)
 
         if _dbg:
-            print(f"[LTX-2 conn] after_rmsnorm: mean={hidden_states.float().mean():.8f}, "
-                  f"std={hidden_states.float().std():.8f}")
+            with torch.no_grad():
+                print(f"[LTX-2 conn] after_rmsnorm: mean={hidden_states.float().mean():.8f}, "
+                      f"std={hidden_states.float().std():.8f}")
 
         return hidden_states, additive_attention_mask
 

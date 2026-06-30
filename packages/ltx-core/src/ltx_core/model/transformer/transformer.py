@@ -280,30 +280,32 @@ class BasicAVTransformerBlock(torch.nn.Module):
             )
 
             if _dbg and _blk_idx == 0:
-                print(
-                    f"[LTX-2 BLK-{_blk_idx}] scale_shift_table: dtype={self.scale_shift_table.dtype}, "
-                    f"mean={self.scale_shift_table.float().mean().item():.8f}, "
-                    f"std={self.scale_shift_table.float().std().item():.8f}"
-                )
-                print(
-                    f"[LTX-2 BLK-{_blk_idx}] timesteps: dtype={video.timesteps.dtype}, "
-                    f"mean={video.timesteps.float().mean().item():.8f}"
-                )
-                print(
-                    f"[LTX-2 BLK-{_blk_idx}] vshift_msa: mean={vshift_msa.float().mean().item():.8f}, "
-                    f"vscale_msa: mean={vscale_msa.float().mean().item():.8f}, "
-                    f"vgate_msa: mean={vgate_msa.float().mean().item():.8f}"
-                )
+                with torch.no_grad():
+                    print(
+                        f"[LTX-2 BLK-{_blk_idx}] scale_shift_table: dtype={self.scale_shift_table.dtype}, "
+                        f"mean={self.scale_shift_table.float().mean().item():.8f}, "
+                        f"std={self.scale_shift_table.float().std().item():.8f}"
+                    )
+                    print(
+                        f"[LTX-2 BLK-{_blk_idx}] timesteps: dtype={video.timesteps.dtype}, "
+                        f"mean={video.timesteps.float().mean().item():.8f}"
+                    )
+                    print(
+                        f"[LTX-2 BLK-{_blk_idx}] vshift_msa: mean={vshift_msa.float().mean().item():.8f}, "
+                        f"vscale_msa: mean={vscale_msa.float().mean().item():.8f}, "
+                        f"vgate_msa: mean={vgate_msa.float().mean().item():.8f}"
+                    )
 
             norm_vx = self.ada_zero_function(vx, self.norm_eps, vscale_msa, vshift_msa)
             del vshift_msa, vscale_msa
 
             if _dbg and _blk_idx == 0:
-                print(
-                    f"[LTX-2 BLK-{_blk_idx}] norm_vx: dtype={norm_vx.dtype}, "
-                    f"mean={norm_vx.float().mean().item():.8f}, "
-                    f"std={norm_vx.float().std().item():.8f}"
-                )
+                with torch.no_grad():
+                    print(
+                        f"[LTX-2 BLK-{_blk_idx}] norm_vx: dtype={norm_vx.dtype}, "
+                        f"mean={norm_vx.float().mean().item():.8f}, "
+                        f"std={norm_vx.float().std().item():.8f}"
+                    )
 
             vx_msa_out = self.attn1(
                 norm_vx,

@@ -360,19 +360,20 @@ class LtxvTrainer:
         additive_mask = convert_to_additive_mask(mask, video_features.dtype)
 
         if os.environ.get("LTX_DEBUG_FIXED_NOISE") == "1":
-            print(f"[LTX-2 CP0] video_features: shape={list(video_features.shape)}, "
-                  f"dtype={video_features.dtype}, mean={video_features.float().mean():.8f}, "
-                  f"std={video_features.float().std():.8f}")
-            if audio_features is not None:
-                print(f"[LTX-2 CP0] audio_features: shape={list(audio_features.shape)}, "
-                      f"dtype={audio_features.dtype}, mean={audio_features.float().mean():.8f}, "
-                      f"std={audio_features.float().std():.8f}")
-            print(f"[LTX-2 CP0] mask: shape={list(mask.shape)}, sum={mask.sum().item()}")
+            with torch.no_grad():
+                print(f"[LTX-2 CP0] video_features: shape={list(video_features.shape)}, "
+                      f"dtype={video_features.dtype}, mean={video_features.float().mean():.8f}, "
+                      f"std={video_features.float().std():.8f}")
+                if audio_features is not None:
+                    print(f"[LTX-2 CP0] audio_features: shape={list(audio_features.shape)}, "
+                          f"dtype={audio_features.dtype}, mean={audio_features.float().mean():.8f}, "
+                          f"std={audio_features.float().std():.8f}")
+                print(f"[LTX-2 CP0] mask: shape={list(mask.shape)}, sum={mask.sum().item()}")
 
-            vc = self._embeddings_processor.video_connector
-            first_param = next(iter(vc.parameters()))
-            print(f"[LTX-2 CP0] connector_weight: dtype={first_param.dtype}, "
-                  f"mean={first_param.float().mean():.8f}, std={first_param.float().std():.8f}")
+                vc = self._embeddings_processor.video_connector
+                first_param = next(iter(vc.parameters()))
+                print(f"[LTX-2 CP0] connector_weight: dtype={first_param.dtype}, "
+                      f"mean={first_param.float().mean():.8f}, std={first_param.float().std():.8f}")
 
         print(f"Upstream connector inner_dim={self._embeddings_processor.video_connector.inner_dim}, "
               f"heads={self._embeddings_processor.video_connector.num_attention_heads}, "
@@ -383,13 +384,14 @@ class LtxvTrainer:
         )
 
         if os.environ.get("LTX_DEBUG_FIXED_NOISE") == "1":
-            print(f"[LTX-2 CP1] video_embeds: shape={list(video_embeds.shape)}, "
-                  f"mean={video_embeds.float().mean():.8f}, std={video_embeds.float().std():.8f}")
-            if audio_embeds is not None:
-                print(f"[LTX-2 CP1] audio_embeds: shape={list(audio_embeds.shape)}, "
-                      f"mean={audio_embeds.float().mean():.8f}, std={audio_embeds.float().std():.8f}")
-            print(f"[LTX-2 CP1] attention_mask: shape={list(attention_mask.shape)}, "
-                  f"sum={attention_mask.float().sum():.0f}")
+            with torch.no_grad():
+                print(f"[LTX-2 CP1] video_embeds: shape={list(video_embeds.shape)}, "
+                      f"mean={video_embeds.float().mean():.8f}, std={video_embeds.float().std():.8f}")
+                if audio_embeds is not None:
+                    print(f"[LTX-2 CP1] audio_embeds: shape={list(audio_embeds.shape)}, "
+                          f"mean={audio_embeds.float().mean():.8f}, std={audio_embeds.float().std():.8f}")
+                print(f"[LTX-2 CP1] attention_mask: shape={list(attention_mask.shape)}, "
+                      f"sum={attention_mask.float().sum():.0f}")
 
         conditions["video_prompt_embeds"] = video_embeds
         conditions["audio_prompt_embeds"] = audio_embeds
@@ -399,20 +401,21 @@ class LtxvTrainer:
         model_inputs = self._training_strategy.prepare_training_inputs(batch, self._timestep_sampler)
 
         if os.environ.get("LTX_DEBUG_FIXED_NOISE") == "1":
-            print(f"[LTX-2 CP3.1] latent_tokens: shape={list(model_inputs.video.latent.shape)}, "
-                  f"mean={model_inputs.video.latent.float().mean().item():.8f}, std={model_inputs.video.latent.float().std().item():.8f}")
-            print(f"[LTX-2 CP3.2] timesteps: shape={list(model_inputs.video.timesteps.shape)}, "
-                  f"mean={model_inputs.video.timesteps.float().mean().item():.8f}, std={model_inputs.video.timesteps.float().std().item():.8f}")
-            print(f"[LTX-2 CP3.3] positions: shape={list(model_inputs.video.positions.shape)}, "
-                  f"mean={model_inputs.video.positions.float().mean().item():.8f}, std={model_inputs.video.positions.float().std().item():.8f}")
-            print(f"[LTX-2 CP3.4] video_modality.latent: shape={list(model_inputs.video.latent.shape)}, "
-                  f"mean={model_inputs.video.latent.float().mean().item():.8f}, std={model_inputs.video.latent.float().std().item():.8f}")
-            print(f"[LTX-2 CP3.4] video_modality.context: shape={list(model_inputs.video.context.shape)}, "
-                  f"mean={model_inputs.video.context.float().mean().item():.8f}, std={model_inputs.video.context.float().std().item():.8f}")
-            print(f"[LTX-2 CP3.4] video_modality.sigma: {model_inputs.video.sigma}")
-            print(f"[LTX-2 CP3.4] video_modality.timesteps: shape={list(model_inputs.video.timesteps.shape)}, "
-                  f"mean={model_inputs.video.timesteps.float().mean().item():.8f}")
-            print(f"[LTX-2 CP3.5] Before transformer.forward, audio_modality={'None' if model_inputs.audio is None else 'present'}")
+            with torch.no_grad():
+                print(f"[LTX-2 CP3.1] latent_tokens: shape={list(model_inputs.video.latent.shape)}, "
+                      f"mean={model_inputs.video.latent.float().mean().item():.8f}, std={model_inputs.video.latent.float().std().item():.8f}")
+                print(f"[LTX-2 CP3.2] timesteps: shape={list(model_inputs.video.timesteps.shape)}, "
+                      f"mean={model_inputs.video.timesteps.float().mean().item():.8f}, std={model_inputs.video.timesteps.float().std().item():.8f}")
+                print(f"[LTX-2 CP3.3] positions: shape={list(model_inputs.video.positions.shape)}, "
+                      f"mean={model_inputs.video.positions.float().mean().item():.8f}, std={model_inputs.video.positions.float().std().item():.8f}")
+                print(f"[LTX-2 CP3.4] video_modality.latent: shape={list(model_inputs.video.latent.shape)}, "
+                      f"mean={model_inputs.video.latent.float().mean().item():.8f}, std={model_inputs.video.latent.float().std().item():.8f}")
+                print(f"[LTX-2 CP3.4] video_modality.context: shape={list(model_inputs.video.context.shape)}, "
+                      f"mean={model_inputs.video.context.float().mean().item():.8f}, std={model_inputs.video.context.float().std().item():.8f}")
+                print(f"[LTX-2 CP3.4] video_modality.sigma: {model_inputs.video.sigma}")
+                print(f"[LTX-2 CP3.4] video_modality.timesteps: shape={list(model_inputs.video.timesteps.shape)}, "
+                      f"mean={model_inputs.video.timesteps.float().mean().item():.8f}")
+                print(f"[LTX-2 CP3.5] Before transformer.forward, audio_modality={'None' if model_inputs.audio is None else 'present'}")
 
         # Run transformer forward pass with Modality-based interface
         video_pred, audio_pred = self._transformer(
@@ -422,19 +425,20 @@ class LtxvTrainer:
         )
 
         if os.environ.get("LTX_DEBUG_FIXED_NOISE") == "1":
-            if video_pred is not None:
-                print(f"[LTX-2 CP3.6] After transformer.forward, video_pred: shape={list(video_pred.shape)}, "
+            with torch.no_grad():
+                if video_pred is not None:
+                    print(f"[LTX-2 CP3.6] After transformer.forward, video_pred: shape={list(video_pred.shape)}, "
+                          f"mean={video_pred.float().mean().item():.8f}, std={video_pred.float().std().item():.8f}")
+                else:
+                    print(f"[LTX-2 CP3.6] After transformer.forward, video_pred: None")
+                if audio_pred is not None:
+                    print(f"[LTX-2 CP3.6] After transformer.forward, audio_pred: shape={list(audio_pred.shape)}, "
+                          f"mean={audio_pred.float().mean().item():.8f}, std={audio_pred.float().std().item():.8f}")
+                print(f"[LTX-2 CP3] video_pred: shape={list(video_pred.shape)}, "
                       f"mean={video_pred.float().mean().item():.8f}, std={video_pred.float().std().item():.8f}")
-            else:
-                print(f"[LTX-2 CP3.6] After transformer.forward, video_pred: None")
-            if audio_pred is not None:
-                print(f"[LTX-2 CP3.6] After transformer.forward, audio_pred: shape={list(audio_pred.shape)}, "
-                      f"mean={audio_pred.float().mean().item():.8f}, std={audio_pred.float().std().item():.8f}")
-            print(f"[LTX-2 CP3] video_pred: shape={list(video_pred.shape)}, "
-                  f"mean={video_pred.float().mean().item():.8f}, std={video_pred.float().std().item():.8f}")
-            if audio_pred is not None:
-                print(f"[LTX-2 CP3] audio_pred: shape={list(audio_pred.shape)}, "
-                      f"mean={audio_pred.float().mean().item():.8f}, std={audio_pred.float().std().item():.8f}")
+                if audio_pred is not None:
+                    print(f"[LTX-2 CP3] audio_pred: shape={list(audio_pred.shape)}, "
+                          f"mean={audio_pred.float().mean().item():.8f}, std={audio_pred.float().std().item():.8f}")
 
         # Use strategy to compute loss (returns per-element [B,] for sigma-bucket tracking)
         loss = self._training_strategy.compute_loss(video_pred, audio_pred, model_inputs)
