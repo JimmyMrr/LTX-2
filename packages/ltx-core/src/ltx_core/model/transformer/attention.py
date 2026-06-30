@@ -96,7 +96,7 @@ class PytorchAttention(AttentionCallable):
             if mask.ndim == 3:
                 mask = mask.unsqueeze(1)
 
-        with sdpa_kernel(self._priority, set_priority=True):
+        with sdpa_kernel(SDPBackend.MATH):
             out = torch.nn.functional.scaled_dot_product_attention(
                 q, k, v, attn_mask=mask, dropout_p=0.0, is_causal=False
             )
